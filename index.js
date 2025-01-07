@@ -1,88 +1,84 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
-const {
-  basename,
-  resolve,
-  relative
-} = require('path');
+const { basename, resolve, relative } = require('path');
 
-const {
-  readFileSync
-} = require('fs');
-
+const { readFileSync } = require('fs');
 
 async function printDiagram(page, options) {
-
   const {
     input,
     outputs,
     minDimensions,
     footer,
     title = true,
-    deviceScaleFactor
+    deviceScaleFactor,
+    inputIsXmlString = false,
   } = options;
 
-  const diagramXML = readFileSync(input, 'utf8');
+  let diagramXML;
+  if (inputIsXmlString) {
+    diagramXML = input;
+  } else {
+    diagramXML = readFileSync(input, 'utf8');
+  }
 
-  const diagramTitle = title === false ? false : (
-    title.length ? title : basename(input)
-  );
+  const diagramTitle =
+    title === false ? false : title.length ? title : basename(input);
 
   await page.goto(`file://${__dirname}/skeleton.html`);
 
-  const viewerScript = relative(__dirname, require.resolve('bpmn-js/dist/bpmn-viewer.production.min.js'));
+  const viewerScript = relative(
+    __dirname,
+    require.resolve('bpmn-js/dist/bpmn-viewer.production.min.js')
+  );
 
-  const desiredViewport = await page.evaluate(async function(diagramXML, options) {
+  const desiredViewport = await page.evaluate(
+    async function (diagramXML, options) {
+      const { viewerScript, ...openOptions } = options;
 
-    const {
+      await loadScript(viewerScript);
+
+      // returns desired viewport
+      return openDiagram(diagramXML, openOptions);
+    },
+    diagramXML,
+    {
+      minDimensions,
+      title: diagramTitle,
       viewerScript,
-      ...openOptions
-    } = options;
-
-    await loadScript(viewerScript);
-
-    // returns desired viewport
-    return openDiagram(diagramXML, openOptions);
-  }, diagramXML, {
-    minDimensions,
-    title: diagramTitle,
-    viewerScript,
-    footer
-  });;
+      footer,
+    }
+  );
 
   page.setViewport({
     width: Math.round(desiredViewport.width),
     height: Math.round(desiredViewport.height),
-    deviceScaleFactor: deviceScaleFactor
+    deviceScaleFactor: deviceScaleFactor,
   });
 
   await page.evaluate(() => resize());
 
   for (const output of outputs) {
-
     console.log(`writing ${output}`);
 
     if (output.endsWith('.pdf')) {
       await page.pdf({
         path: output,
         width: desiredViewport.width,
-        height: desiredViewport.diagramHeight
+        height: desiredViewport.diagramHeight,
       });
-    } else
-    if (output.endsWith('.png')) {
+    } else if (output.endsWith('.png')) {
       await page.screenshot({
         path: output,
         clip: {
           x: 0,
           y: 0,
           width: desiredViewport.width,
-          height: desiredViewport.diagramHeight
-        }
+          height: desiredViewport.diagramHeight,
+        },
       });
-    } else
-    if (output.endsWith('.svg')) {
-
+    } else if (output.endsWith('.svg')) {
       const svg = await page.evaluate(() => toSVG());
 
       fs.writeFileSync(output, svg, 'utf8');
@@ -90,16 +86,14 @@ async function printDiagram(page, options) {
       console.error(`Unknown output file format: ${output}`);
     }
   }
-
 }
-
 
 async function withPage(fn) {
   let browser;
 
   try {
     browser = await puppeteer.launch({
-      headless: 'new'
+      headless: 'new',
     });
 
     await fn(await browser.newPage());
@@ -110,24 +104,18 @@ async function withPage(fn) {
   }
 }
 
-
-async function convertAll(conversions, options={}) {
-
+async function convertAll(conversions, options = {}) {
   const {
     minDimensions,
     footer,
     title,
-    deviceScaleFactor
+    deviceScaleFactor,
+    inputIsXmlString = false,
   } = options;
 
-  await withPage(async function(page) {
-
+  await withPage(async function (page) {
     for (const conversion of conversions) {
-
-      const {
-        input,
-        outputs
-      } = conversion;
+      const { input, outputs } = conversion;
 
       await printDiagram(page, {
         input,
@@ -135,24 +123,25 @@ async function convertAll(conversions, options={}) {
         minDimensions,
         title,
         footer,
-        deviceScaleFactor
+        deviceScaleFactor,
+        inputIsXmlString,
       });
     }
-
   });
-
 }
 
 module.exports.convertAll = convertAll;
 
-async function convert(input, output) {
-  return await convertAll([
-    {
-      input,
-      outputs: [ output ]
-    }
-  ]);
+async function convert(input, output, inputIsXmlString = false) {
+  return await convertAll(
+    [
+      {
+        input,
+        outputs: [output],
+      },
+    ],
+    { inputIsXmlString }
+  );
 }
-
 
 module.exports.convert = convert;
